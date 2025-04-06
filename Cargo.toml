@@ -4,3 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+pest = "2.8"
+pest_derive = "2.8"
+
+[dev-dependencies]
+parameterized = "2.0.0"
+pretty_assertions = "1.4.1"
+

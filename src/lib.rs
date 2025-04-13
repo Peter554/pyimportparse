@@ -10,21 +10,14 @@ struct GrammarParser;
 pub struct Import {
     pub imported_object: String,
     pub line_number: usize,
-    pub line_contents: String,
     pub typechecking_only: bool,
 }
 
 impl Import {
-    pub fn new(
-        imported_object: &str,
-        line_number: usize,
-        line_contents: &str,
-        typechecking_only: bool,
-    ) -> Self {
+    pub fn new(imported_object: &str, line_number: usize, typechecking_only: bool) -> Self {
         Self {
             imported_object: imported_object.to_owned(),
             line_number,
-            line_contents: line_contents.to_owned(),
             typechecking_only,
         }
     }
@@ -84,7 +77,6 @@ fn parse_inner_pairs(pair: Pair<Rule>, context: &mut ParseContext) -> Vec<Import
 
 fn parse_simple_import_statement(pair: Pair<Rule>, context: &mut ParseContext) -> Vec<Import> {
     let (line_number, _) = pair.line_col();
-    let code = pair.as_str().trim();
 
     pair.into_inner()
         .flat_map(|inner_pair| match inner_pair.as_rule() {
@@ -93,7 +85,6 @@ fn parse_simple_import_statement(pair: Pair<Rule>, context: &mut ParseContext) -
                 Some(Import {
                     imported_object,
                     line_number,
-                    line_contents: code.to_string(),
                     typechecking_only: context.typechecking_only,
                 })
             }
@@ -105,7 +96,6 @@ fn parse_simple_import_statement(pair: Pair<Rule>, context: &mut ParseContext) -
 
 fn parse_from_import_statement(pair: Pair<Rule>, context: &mut ParseContext) -> Vec<Import> {
     let (line_number, _) = pair.line_col();
-    let code = pair.as_str().trim();
     let mut inner_pairs = pair.into_inner();
     let imported_base = {
         let mut imported_base = inner_pairs.next().unwrap().as_str();
@@ -122,7 +112,6 @@ fn parse_from_import_statement(pair: Pair<Rule>, context: &mut ParseContext) -> 
                 Some(Import {
                     imported_object,
                     line_number,
-                    line_contents: code.to_string(),
                     typechecking_only: context.typechecking_only,
                 })
             }
@@ -136,7 +125,6 @@ fn parse_wildcard_from_import_statement(
     pair: Pair<Rule>,
     context: &mut ParseContext,
 ) -> Vec<Import> {
-    let code = pair.as_str().trim();
     let (line_number, _) = pair.line_col();
     let mut inner_pairs = pair.into_inner();
     let mut imported_l = inner_pairs.next().unwrap().as_str();
@@ -147,7 +135,6 @@ fn parse_wildcard_from_import_statement(
     vec![Import {
         imported_object: imported.to_string(),
         line_number,
-        line_contents: code.to_owned(),
         typechecking_only: context.typechecking_only,
     }]
 }
@@ -169,39 +156,39 @@ mod tests {
         },
         ParseTestCase {
             code: "import foo",
-            expected_imports: &[Import::new("foo", 1, "import foo", false)],
+            expected_imports: &[Import::new("foo", 1, false)],
         },
         ParseTestCase {
             code: "import foo_bar",
-            expected_imports: &[Import::new("foo_bar", 1, "import foo_bar", false)],
+            expected_imports: &[Import::new("foo_bar", 1, false)],
         },
         ParseTestCase {
             code: "import foo.bar",
-            expected_imports: &[Import::new("foo.bar", 1, "import foo.bar", false)],
+            expected_imports: &[Import::new("foo.bar", 1, false)],
         },
         ParseTestCase {
             code: "import foo as foofoo",
-            expected_imports: &[Import::new("foo", 1, "import foo as foofoo", false)],
+            expected_imports: &[Import::new("foo", 1, false)],
         },
         ParseTestCase {
             code: "import foo, bar",
             expected_imports: &[
-                Import::new("foo", 1, "import foo, bar", false),
-                Import::new("bar", 1, "import foo, bar", false)
+                Import::new("foo", 1, false),
+                Import::new("bar", 1, false)
             ],
         },
         ParseTestCase {
             code: "import foo; import bar",
             expected_imports: &[
-                Import::new("foo", 1, "import foo", false),
-                Import::new("bar", 1, "import bar", false)
+                Import::new("foo", 1, false),
+                Import::new("bar", 1, false)
             ],
         },
         ParseTestCase {
             code: "import foo; import bar;",
             expected_imports: &[
-                Import::new("foo", 1, "import foo", false),
-                Import::new("bar", 1, "import bar", false)
+                Import::new("foo", 1, false),
+                Import::new("bar", 1, false)
             ],
         },
         ParseTestCase {
@@ -209,80 +196,80 @@ mod tests {
 import a
 import b.c",
             expected_imports: &[
-                Import::new("a", 2, "import a", false),
-                Import::new("b.c", 3, "import b.c", false)
+                Import::new("a", 2, false),
+                Import::new("b.c", 3, false)
             ],
         },
         ParseTestCase {
             code: "from foo import bar",
-            expected_imports: &[Import::new("foo.bar", 1, "from foo import bar", false)],
+            expected_imports: &[Import::new("foo.bar", 1, false)],
         },
         ParseTestCase {
             code: "from foo import bar as barbar",
-            expected_imports: &[Import::new("foo.bar", 1, "from foo import bar as barbar", false)],
+            expected_imports: &[Import::new("foo.bar", 1, false)],
         },
         ParseTestCase {
             code: "from .foo import bar",
-            expected_imports: &[Import::new(".foo.bar", 1, "from .foo import bar", false)],
+            expected_imports: &[Import::new(".foo.bar", 1, false)],
         },
         ParseTestCase {
             code: "from ..foo import bar",
-            expected_imports: &[Import::new("..foo.bar", 1, "from ..foo import bar", false)],
+            expected_imports: &[Import::new("..foo.bar", 1, false)],
         },
         ParseTestCase {
             code: "from . import foo",
-            expected_imports: &[Import::new(".foo", 1, "from . import foo", false)],
+            expected_imports: &[Import::new(".foo", 1, false)],
         },
         ParseTestCase {
             code: "from .. import foo",
-            expected_imports: &[Import::new("..foo", 1, "from .. import foo", false)],
+            expected_imports: &[Import::new("..foo", 1, false)],
         },
         ParseTestCase {
             code: "import foo; from bar import baz",
             expected_imports: &[
-                Import::new("foo", 1, "import foo", false),
-                Import::new("bar.baz", 1, "from bar import baz", false)
+                Import::new("foo", 1, false),
+                Import::new("bar.baz", 1, false)
             ],
         },
         ParseTestCase {
             code: "from foo import *",
-            expected_imports: &[Import::new("foo.*", 1, "from foo import *", false)],
+            expected_imports: &[Import::new("foo.*", 1, false)],
         },
         ParseTestCase {
             code: "from . import *",
-            expected_imports: &[Import::new(".*", 1, "from . import *", false)],
+            expected_imports: &[Import::new(".*", 1, false)],
         },
         ParseTestCase {
             code: "from .. import *",
-            expected_imports: &[Import::new("..*", 1, "from .. import *", false)],
+            expected_imports: &[Import::new("..*", 1, false)],
         },
         ParseTestCase {
             code: "from foo import bar, baz",
             expected_imports: &[
-                Import::new("foo.bar", 1, "from foo import bar, baz", false),
-                Import::new("foo.baz", 1, "from foo import bar, baz", false)
+                Import::new("foo.bar", 1, false),
+                Import::new("foo.baz", 1, false)
             ],
         },
         ParseTestCase {
             code: "from foo import (bar)",
-            expected_imports: &[Import::new("foo.bar", 1, "from foo import (bar)", false)],
+            expected_imports: &[Import::new("foo.bar", 1, false)],
         },
         ParseTestCase {
             code: "from foo import (bar,)",
-            expected_imports: &[Import::new("foo.bar", 1, "from foo import (bar,)", false)],
+            expected_imports: &[Import::new("foo.bar", 1, false)],
         },
         ParseTestCase {
             code: "from foo import (bar, baz)",
             expected_imports: &[
-                Import::new("foo.bar", 1, "from foo import (bar, baz)", false),
-                Import::new("foo.baz", 1, "from foo import (bar, baz)", false)
+                Import::new("foo.bar", 1, false),
+                Import::new("foo.baz", 1, false)
             ],
         },
         ParseTestCase {
             code: "from foo import (bar, baz,)",
             expected_imports: &[
-                Import::new("foo.bar", 1, "from foo import (bar, baz,)", false),
-                Import::new("foo.baz", 1, "from foo import (bar, baz,)", false)
+                Import::new("foo.bar", 1, false),
+                Import::new("foo.baz", 1, false)
             ],
         },
         ParseTestCase {
@@ -290,21 +277,14 @@ import b.c",
 from foo import (
     bar, baz
 )",
-            expected_imports: &[Import::new("foo.bar", 2, "from foo import (
-    bar, baz
-)", false), Import::new("foo.baz", 2, "from foo import (
-    bar, baz
-)", false)],
+            expected_imports: &[Import::new("foo.bar", 2, false), Import::new("foo.baz", 2, false)],
         },
         ParseTestCase {
             code: r"from \
     foo \
     import \
     bar",
-            expected_imports: &[Import::new("foo.bar", 1, r"from \
-    foo \
-    import \
-    bar", false)],
+            expected_imports: &[Import::new("foo.bar", 1, false)],
         },
         ParseTestCase {
             code: "
@@ -313,9 +293,9 @@ if typing.TYPE_CHECKING:
     import foo
 import bar",
             expected_imports: &[
-    Import::new("typing", 2, "import typing", false),
-    Import::new("foo", 4, "import foo", true),
-    Import::new("bar", 5, "import bar", false),
+    Import::new("typing", 2, false),
+    Import::new("foo", 4, true),
+    Import::new("bar", 5, false),
 ],
         },
         ParseTestCase {
@@ -324,8 +304,8 @@ import typing
 if typing.TYPE_CHECKING:
     import foo",
             expected_imports: &[
-    Import::new("typing", 2, "import typing", false),
-    Import::new("foo", 4, "import foo", true),
+    Import::new("typing", 2, false),
+    Import::new("foo", 4, true),
 ],
         },
         ParseTestCase {
@@ -335,8 +315,8 @@ if typing.TYPE_CHECKING:
     print(\"hello\")
     import foo",
             expected_imports: &[
-    Import::new("typing", 2, "import typing", false),
-    Import::new("foo", 5, "import foo", true),
+    Import::new("typing", 2, false),
+    Import::new("foo", 5, true),
 ],
         },
         ParseTestCase {
@@ -349,14 +329,14 @@ if typing.TYPE_CHECKING:
 
 import bar",
             expected_imports: &[
-    Import::new("typing", 2, "import typing", false),
-    Import::new("foo", 6, "import foo", true),
-    Import::new("bar", 8, "import bar", false),
+    Import::new("typing", 2, false),
+    Import::new("foo", 6, true),
+    Import::new("bar", 8, false),
 ],
         },
         ParseTestCase {
             code: "import foo  # hello",
-            expected_imports: &[Import::new("foo", 1, "import foo", false)],
+            expected_imports: &[Import::new("foo", 1, false)],
         },
         ParseTestCase {
             code: r#"
@@ -364,21 +344,29 @@ import bar",
 import foo
 """
 import bar"#,
-            expected_imports: &[Import::new("bar", 5, "import bar", false)],
+            expected_imports: &[Import::new("bar", 5, false)],
         },
         ParseTestCase {
             code: r#"
 if TYPE_CHECKING: # Only for typechecking
     import foo"#,
-            expected_imports: &[Import::new("foo", 3, "import foo", true)],
+            expected_imports: &[Import::new("foo", 3, true)],
         },
         ParseTestCase {
             code: r#"
 if TYPE_CHECKING: import foo  # comment
 import bar"#,
             expected_imports: &[
-                Import::new("foo", 2, "import foo", true),
-                Import::new("bar", 3, "import bar", false)
+                Import::new("foo", 2, true),
+                Import::new("bar", 3, false)
+            ],
+        },
+        ParseTestCase {
+            code: r#"
+def f():
+    import foo"#,
+            expected_imports: &[
+                Import::new("foo", 3, false),
             ],
         },
     })]

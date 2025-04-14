@@ -19,7 +19,7 @@ IMPORT_STATEMENT = _{
 SIMPLE_IMPORT_STATEMENT = { "import " ~ MODULE ~ AS_IDENTIFIER? ~ ("," ~ MODULE ~ AS_IDENTIFIER?)* }
 FROM_IMPORT_STATEMENT = { "from " ~ RELATIVE_MODULE ~ "import " ~ IDENTIFIER ~ AS_IDENTIFIER? ~ ("," ~ IDENTIFIER ~ AS_IDENTIFIER?)* }
 MULTILINE_FROM_IMPORT_STATEMENT = {
-    "from " ~ RELATIVE_MODULE ~ "import " ~ "(" ~ (COMMENT | NEWLINE)* ~ IDENTIFIER ~ AS_IDENTIFIER? ~ ("," ~ (COMMENT | NEWLINE)* ~ IDENTIFIER ~ AS_IDENTIFIER?)* ~ ","? ~ (COMMENT | NEWLINE)* ~ ")"
+    "from " ~ RELATIVE_MODULE ~ "import " ~ "(" ~ (_COMMENT | NEWLINE)* ~ IDENTIFIER ~ AS_IDENTIFIER? ~ ("," ~ (_COMMENT | NEWLINE)* ~ IDENTIFIER ~ AS_IDENTIFIER?)* ~ ","? ~ (_COMMENT | NEWLINE)* ~ ")"
 }
 WILDCARD_FROM_IMPORT_STATEMENT = { "from " ~ RELATIVE_MODULE ~ "import " ~ "*" }
 AS_IDENTIFIER = { "as " ~ IDENTIFIER }
@@ -58,9 +58,6 @@ MULTILINE_STRING_DOUBLE = {
     ~ "\"\"\""
 }
 
-COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
 
-WHITESPACE = _{
-    " "
-    | ("\\" ~ NEWLINE)
-}
+WHITESPACE = _{ " " | ("\\" ~ NEWLINE)}
+_COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* }

@@ -1,5 +1,5 @@
 use rayon::prelude::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::env::args;
 use std::fs;
@@ -50,7 +50,6 @@ fn main() {
     println!("Time to scan imports: {:?}", duration);
 
     if let Some(outpath) = args().nth(2) {
-        let outpath: PathBuf = outpath.into();
         let imports = imports
             .into_iter()
             .map(|(module_path, imports)| {
@@ -68,8 +67,13 @@ fn main() {
             })
             .collect::<HashMap<_, _>>();
         let json = serde_json::to_string(&SerializableImportsData { data: imports }).unwrap();
-        fs::write(&outpath, &json).expect("Unable to imports file");
-        println!("Imports written to: {:?}", outpath);
+        if outpath == ":print" {
+            println!("{}", json);
+        } else {
+            let outpath: PathBuf = outpath.into();
+            fs::write(&outpath, &json).expect("Unable to write imports file");
+            println!("Imports written to: {:?}", outpath);
+        }
     }
 }
 
@@ -81,14 +85,14 @@ fn is_hidden(entry: &DirEntry) -> bool {
         .unwrap_or(false)
 }
 
-#[derive(Debug, Eq, PartialEq, Serialize)]
+#[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct SerializableImportsData {
-    pub data: HashMap<String, HashSet<SerializableImport>>,
+    data: HashMap<String, HashSet<SerializableImport>>,
 }
 
-#[derive(Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize)]
+#[derive(Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 struct SerializableImport {
-    pub imported_object: String,
-    pub line_number: u32,
-    pub typechecking_only: bool,
+    imported_object: String,
+    line_number: u32,
+    typechecking_only: bool,
 }

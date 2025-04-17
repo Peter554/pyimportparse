@@ -1,14 +1,14 @@
 # pyimportparse
 
-A rust crate to parse python imports (ignoring the rest of the code).
+A rust crate to parse python imports (while ignoring the rest of the code).
 
 Motivation:
 * For fun/interest.
-* Lack of other tool:
+* Lack of alternative tool:
   * Presently [RustPython/Parser](https://github.com/RustPython/Parser) does not support Python 3.12+.
   * Presently [Ruff Python Parser](https://github.com/astral-sh/ruff/tree/main/crates/ruff_python_parser) is not published publicly as a crate.
 
-Use with care. I've run the parser over the Django codebase and the results suggests that 
+Use with care. I've run the parser over the Django codebase and the results suggest that 
 all imports were successfully parsed. However, there could still be cases where the parser does
 not behave correctly. 
 

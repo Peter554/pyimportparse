@@ -5,7 +5,6 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use walkdir::{DirEntry, WalkDir};
 
-// use pyimports::parse::parse_imports;
 use pyimportparse::parse_imports;
 
 #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]

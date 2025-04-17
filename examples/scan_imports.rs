@@ -1,5 +1,6 @@
 use rayon::prelude::*;
-use std::collections::HashMap;
+use serde::Serialize;
+use std::collections::{HashMap, HashSet};
 use std::env::args;
 use std::fs;
 use std::path::PathBuf;
@@ -28,14 +29,14 @@ fn main() {
         .collect::<Vec<_>>();
 
     let start = Instant::now();
-    let _: HashMap<PathBuf, Vec<Import>> = modules_paths_to_scan
+    let imports: HashMap<String, Vec<Import>> = modules_paths_to_scan
         .into_par_iter()
         .fold(
             HashMap::new,
-            |mut hm: HashMap<PathBuf, Vec<Import>>, module_path| {
+            |mut hm: HashMap<String, Vec<Import>>, module_path| {
                 let code = fs::read_to_string(&module_path).unwrap();
                 let imports = parse_imports(&code).unwrap();
-                hm.insert(module_path, imports);
+                hm.insert(module_path.to_str().unwrap().to_owned(), imports);
                 hm
             },
         )
@@ -47,6 +48,29 @@ fn main() {
         });
     let duration = start.elapsed();
     println!("Time to scan imports: {:?}", duration);
+
+    if let Some(outpath) = args().nth(2) {
+        let outpath: PathBuf = outpath.into();
+        let imports = imports
+            .into_iter()
+            .map(|(module_path, imports)| {
+                (
+                    module_path,
+                    imports
+                        .into_iter()
+                        .map(|import| SerializableImport {
+                            imported_object: import.imported_object,
+                            line_number: import.line_number,
+                            typechecking_only: import.typechecking_only,
+                        })
+                        .collect::<HashSet<_>>(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let json = serde_json::to_string(&SerializableImportsData { data: imports }).unwrap();
+        fs::write(&outpath, &json).expect("Unable to imports file");
+        println!("Imports written to: {:?}", outpath);
+    }
 }
 
 fn is_hidden(entry: &DirEntry) -> bool {
@@ -55,4 +79,16 @@ fn is_hidden(entry: &DirEntry) -> bool {
         .to_str()
         .map(|s| s.starts_with("."))
         .unwrap_or(false)
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+struct SerializableImportsData {
+    pub data: HashMap<String, HashSet<SerializableImport>>,
+}
+
+#[derive(Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize)]
+struct SerializableImport {
+    pub imported_object: String,
+    pub line_number: u32,
+    pub typechecking_only: bool,
 }

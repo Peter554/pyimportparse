@@ -7,8 +7,6 @@ use walkdir::{DirEntry, WalkDir};
 
 use pyimportparse::parse_imports;
 
-
-
 fn main() {
     let mut data = HashMap::new();
 
@@ -42,7 +40,8 @@ fn main() {
     let imports_data = SerializableImportsData { data };
 
     let expected_imports_data = fs::read_to_string("vendor/django/imports.json").unwrap();
-    let expected_imports_data: SerializableImportsData = serde_json::from_str(&expected_imports_data).unwrap();
+    let expected_imports_data: SerializableImportsData =
+        serde_json::from_str(&expected_imports_data).unwrap();
 
     assert_eq!(
         expected_imports_data.data.keys().collect::<HashSet<_>>(),

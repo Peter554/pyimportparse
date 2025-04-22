@@ -13,6 +13,8 @@ exclude = [
 ]
 
 [dependencies]
+nom = "8.0.0"
+nom_locate = "5.0.0"
 pest = "2.8"
 pest_derive = "2.8"
 

@@ -1,5 +1,7 @@
 #![doc = include_str!("../README.md")]
 
+pub mod nom;
+
 use pest::Parser;
 use pest::iterators::Pair;
 use pest_derive::Parser;

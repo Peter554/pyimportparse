@@ -6,6 +6,7 @@ use nom::multi::{many0, many1, separated_list1};
 use nom::sequence::{delimited, preceded, terminated};
 use nom::{IResult, Parser};
 use nom_locate::{LocatedSpan, position};
+use std::borrow::Borrow;
 
 type Span<'a> = LocatedSpan<&'a str>;
 
@@ -17,9 +18,13 @@ pub struct Import {
 }
 
 impl Import {
-    pub fn new(imported_object: &str, line_number: u32, typechecking_only: bool) -> Self {
+    pub fn new<B: Borrow<str>>(
+        imported_object: B,
+        line_number: u32,
+        typechecking_only: bool,
+    ) -> Self {
         Self {
-            imported_object: imported_object.to_owned(),
+            imported_object: imported_object.borrow().to_owned(),
             line_number,
             typechecking_only,
         }
@@ -36,7 +41,10 @@ pub fn parse_imports(s: &str) -> Result<Vec<Import>, String> {
 
 fn parse_import_statement_list(s: Span) -> IResult<Span, Vec<Import>> {
     let (rest, result) = terminated(
-        separated_list1(delimited(space0, tag(";"), space0), parse_import_statement),
+        separated_list1(
+            delimited(space0, tag(";"), space0),
+            alt((parse_import_statement, parse_from_import_statement)),
+        ),
         (
             opt(space0),
             opt(tag(";")),
@@ -68,6 +76,23 @@ fn parse_import_statement(s: Span) -> IResult<Span, Vec<Import>> {
             .map(|(span, module_name)| Import::new(module_name, span.location_line(), false))
             .collect(),
     ))
+}
+
+fn parse_from_import_statement(s: Span) -> IResult<Span, Vec<Import>> {
+    let (rest, result) = (
+        (tag("from"), space1),
+        parse_module,
+        (space1, tag("import"), space1),
+        (position, parse_identifier),
+    )
+        .parse(s)?;
+    let (_, base_module_name, _, (span, identifier)) = result;
+    let module_name = format!("{}.{}", base_module_name, identifier);
+    Ok((rest, vec![Import::new(
+        module_name,
+        span.location_line(),
+        false,
+    )]))
 }
 
 fn parse_module(s: Span) -> IResult<Span, &str> {

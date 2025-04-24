@@ -3,7 +3,7 @@ use nom::bytes::complete::tag;
 use nom::character::complete::{alphanumeric1, newline, not_line_ending, space0, space1};
 use nom::combinator::{all_consuming, opt, recognize};
 use nom::multi::{many0, many1, separated_list1};
-use nom::sequence::{delimited, terminated};
+use nom::sequence::{delimited, preceded, terminated};
 use nom::{IResult, Parser};
 use nom_locate::{LocatedSpan, position};
 
@@ -28,14 +28,29 @@ impl Import {
 
 pub fn parse_imports(s: &str) -> Result<Vec<Import>, String> {
     let s = Span::new(s);
-    let (_, result) = all_consuming(many0(parse_import_statement))
+    let (_, result) = all_consuming(many0(parse_import_statement_list))
         .parse(s)
         .map_err(|e| e.to_string())?;
     Ok(result.into_iter().flatten().collect())
 }
 
+fn parse_import_statement_list(s: Span) -> IResult<Span, Vec<Import>> {
+    let (rest, result) = terminated(
+        separated_list1(delimited(space0, tag(";"), space0), parse_import_statement),
+        (
+            opt(space0),
+            opt(tag(";")),
+            opt(space0),
+            opt(parse_comment),
+            opt(newline),
+        ),
+    )
+    .parse(s)?;
+    Ok((rest, result.into_iter().flatten().collect()))
+}
+
 fn parse_import_statement(s: Span) -> IResult<Span, Vec<Import>> {
-    let (rest, result) = delimited(
+    let (rest, result) = preceded(
         (tag("import"), space1),
         separated_list1(
             delimited(space0, tag(","), space0),
@@ -44,7 +59,6 @@ fn parse_import_statement(s: Span) -> IResult<Span, Vec<Import>> {
                 opt((space1, tag("as"), space1, parse_identifier)),
             ),
         ),
-        (opt(space0), opt(parse_comment), opt(newline)),
     )
     .parse(s)?;
     Ok((

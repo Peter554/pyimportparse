@@ -10,16 +10,16 @@ use nom_locate::{LocatedSpan, position};
 type Span<'a> = LocatedSpan<&'a str>;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
-pub struct Import<'a> {
-    pub imported_object: &'a str,
+pub struct Import {
+    pub imported_object: String,
     pub line_number: u32,
     pub typechecking_only: bool,
 }
 
-impl<'a> Import<'a> {
-    pub fn new(imported_object: &'a str, line_number: u32, typechecking_only: bool) -> Self {
+impl Import {
+    pub fn new(imported_object: &str, line_number: u32, typechecking_only: bool) -> Self {
         Self {
-            imported_object,
+            imported_object: imported_object.to_owned(),
             line_number,
             typechecking_only,
         }
@@ -94,6 +94,21 @@ mod tests {
         );
     }
 
+    fn parse_and_check_with_typechecking_only(case: (&str, &[(&str, bool)])) {
+        let (code, expected_imports) = case;
+        let imports = parse_imports(code).unwrap();
+        assert_eq!(
+            expected_imports
+                .iter()
+                .map(|i| (i.0.to_owned(), i.1))
+                .collect::<Vec<_>>(),
+            imports
+                .into_iter()
+                .map(|i| (i.imported_object, i.typechecking_only))
+                .collect::<Vec<_>>()
+        );
+    }
+
     #[parameterized(case = {
         ("import foo", &["foo"]),
         ("import foo_FOO_123", &["foo_FOO_123"]),
@@ -105,7 +120,289 @@ mod tests {
         ("import  foo  as  FOO ,  bar  as  BAR", &["foo", "bar"]),
         ("import foo # Comment", &["foo"]),
     })]
-    fn test_parse_simple_import_statement(case: (&str, &[&str])) {
+    fn test_parse_import_statement(case: (&str, &[&str])) {
         parse_and_check(case);
+    }
+
+    #[parameterized(case = {
+        ("from foo import bar", &["foo.bar"]),
+        ("from foo import bar_BAR_123", &["foo.bar_BAR_123"]),
+        ("from .foo import bar", &[".foo.bar"]),
+        ("from ..foo import bar", &["..foo.bar"]),
+        ("from . import foo", &[".foo"]),
+        ("from .. import foo", &["..foo"]),
+        ("from foo.bar import baz", &["foo.bar.baz"]),
+        ("from .foo.bar import baz", &[".foo.bar.baz"]),
+        ("from ..foo.bar import baz", &["..foo.bar.baz"]),
+        ("from foo import bar, baz, bax", &["foo.bar", "foo.baz", "foo.bax"]),
+        ("from foo import bar as BAR", &["foo.bar"]),
+        ("from foo import bar as BAR, baz as BAZ", &["foo.bar", "foo.baz"]),
+        ("from  foo  import  bar  as  BAR ,  baz  as  BAZ", &["foo.bar", "foo.baz"]),
+        ("from foo import bar # Comment", &["foo.bar"]),
+    })]
+    fn test_parse_from_import_statement(case: (&str, &[&str])) {
+        parse_and_check(case);
+    }
+
+    #[parameterized(case = {
+        ("from foo import (bar)", &["foo.bar"]),
+        ("from foo import (bar,)", &["foo.bar"]),
+        ("from foo import (bar, baz)", &["foo.bar", "foo.baz"]),
+        ("from foo import (bar, baz,)", &["foo.bar", "foo.baz"]),
+        ("from foo import (bar as BAR, baz as BAZ,)", &["foo.bar", "foo.baz"]),
+        ("from  foo  import  ( bar  as  BAR , baz  as  BAZ , )", &["foo.bar", "foo.baz"]),
+        ("from foo import (bar, baz,) # Comment", &["foo.bar", "foo.baz"]),
+
+        (r#"
+from foo import (
+    bar,
+    baz
+)
+        "#, &["foo.bar", "foo.baz"]),
+
+        (r#"
+from foo import (
+    bar,
+    baz,
+)
+        "#, &["foo.bar", "foo.baz"]),
+
+        (r#"
+from foo import (
+    a, b,
+    c, d,
+)
+        "#, &["foo.a", "foo.b", "foo.c", "foo.d"]),
+
+        // As name
+        (r#"
+from foo import (
+    bar as BAR,
+    baz as BAZ,
+)
+        "#, &["foo.bar", "foo.baz"]),
+
+        // Whitespace
+        (r#"
+from  foo  import  (
+
+    bar  as  BAR ,
+
+       baz  as  BAZ ,
+
+)
+        "#, &["foo.bar", "foo.baz"]),
+
+        // Comments
+        (r#"
+from foo import ( # C
+    # C
+    bar as BAR, # C
+    # C
+    baz as BAZ, # C
+    # C
+) # C
+        "#, &["foo.bar", "foo.baz"]),
+    })]
+    fn test_parse_multiline_from_import_statement(case: (&str, &[&str])) {
+        parse_and_check(case);
+    }
+
+    #[parameterized(case = {
+        ("from foo import *", &["foo.*"]),
+        ("from .foo import *", &[".foo.*"]),
+        ("from ..foo import *", &["..foo.*"]),
+        ("from . import *", &[".*"]),
+        ("from .. import *", &["..*"]),
+        ("from  foo  import  *", &["foo.*"]),
+        ("from foo import * # Comment", &["foo.*"]),
+    })]
+    fn test_parse_wildcard_from_import_statement(case: (&str, &[&str])) {
+        parse_and_check(case);
+    }
+
+    #[parameterized(case = {
+        ("import a; import b", &["a", "b"]),
+        ("import a; import b;", &["a", "b"]),
+        ("import  a ;  import  b ;", &["a", "b"]),
+        ("import a; import b # Comment", &["a", "b"]),
+        ("import a; from b import c; from d import (e); from f import *", &["a", "b.c", "d.e", "f.*"]),
+    })]
+    fn test_parse_import_statement_list(case: (&str, &[&str])) {
+        parse_and_check(case);
+    }
+
+    #[parameterized(case = {
+        (r#"
+import a, b, \
+       c, d
+        "#, &["a", "b", "c", "d"]),
+
+        (r#"
+from foo import a, b, \
+                c, d
+        "#, &["foo.a", "foo.b", "foo.c", "foo.d"]),
+
+        (r#"
+from foo \
+    import *
+        "#, &["foo.*"]),
+    })]
+    fn test_backslash_continuation(case: (&str, &[&str])) {
+        parse_and_check(case);
+    }
+
+    #[parameterized(case = {
+        (r#"
+import a
+def foo():
+    import b 
+import c
+        "#, &["a", "b", "c"]),
+
+        (r#"
+import a
+class Foo:
+    import b
+import c
+        "#, &["a", "b", "c"]),
+    })]
+    fn test_parse_nested_imports(case: (&str, &[&str])) {
+        parse_and_check(case);
+    }
+
+    #[parameterized(case = {
+        (r#"
+import foo
+if typing.TYPE_CHECKING: import bar
+import baz
+"#, &[("foo", false), ("bar", true), ("baz", false)]),
+
+        (r#"
+import foo
+if TYPE_CHECKING: import bar
+import baz
+"#, &[("foo", false), ("bar", true), ("baz", false)]),
+
+        (r#"
+import foo
+if  TYPE_CHECKING :  import bar
+import baz
+"#, &[("foo", false), ("bar", true), ("baz", false)]),
+
+        (r#"
+import foo
+if TYPE_CHECKING: import bar as BAR
+import baz
+"#, &[("foo", false), ("bar", true), ("baz", false)]),
+
+        (r#"
+import foo # C
+if TYPE_CHECKING: import bar # C
+import baz # C
+"#, &[("foo", false), ("bar", true), ("baz", false)]),
+    })]
+    fn test_singleline_if_typechecking(case: (&str, &[(&str, bool)])) {
+        parse_and_check_with_typechecking_only(case);
+    }
+
+    #[parameterized(case = {
+        (r#"
+import foo
+if typing.TYPE_CHECKING:
+    import bar
+import baz
+"#, &[("foo", false), ("bar", true), ("baz", false)]),
+
+        (r#"
+import foo
+if TYPE_CHECKING:
+    import bar
+import baz
+"#, &[("foo", false), ("bar", true), ("baz", false)]),
+
+        (r#"
+import  foo
+
+if  TYPE_CHECKING :
+
+    import  bar
+
+import  baz
+"#, &[("foo", false), ("bar", true), ("baz", false)]),
+
+        (r#"
+import foo
+if TYPE_CHECKING:
+    import bar as BAR
+import baz
+"#, &[("foo", false), ("bar", true), ("baz", false)]),
+
+        (r#"
+import foo # C
+if TYPE_CHECKING: # C
+    # C
+    import bar # C
+    # C
+import baz # C
+"#, &[("foo", false), ("bar", true), ("baz", false)]),
+
+        (r#"
+import foo
+if TYPE_CHECKING:
+    """
+    Comment
+    """
+    import bar
+import baz
+"#, &[("foo", false), ("bar", true), ("baz", false)]),
+    })]
+    fn test_multiline_if_typechecking(case: (&str, &[(&str, bool)])) {
+        parse_and_check_with_typechecking_only(case);
+    }
+
+    #[parameterized(case = {
+        (r#"
+import foo
+"""
+import bar
+"""
+import baz
+"#, &["foo", "baz"]),
+
+        (r#"
+import foo
+'''
+import bar
+'''
+import baz
+"#, &["foo", "baz"]),
+    })]
+    fn test_multiline_strings(case: (&str, &[&str])) {
+        parse_and_check(case);
+    }
+
+    #[test]
+    fn test_parse_line_numbers() {
+        let imports = parse_imports(
+            "
+import a
+from b import c
+from d import (e)
+from f import *",
+        )
+        .unwrap();
+        assert_eq!(
+            vec![
+                ("a".to_owned(), 2_u32),
+                ("b.c".to_owned(), 3_u32),
+                ("d.e".to_owned(), 4_u32),
+                ("f.*".to_owned(), 5_u32),
+            ],
+            imports
+                .into_iter()
+                .map(|i| (i.imported_object, i.line_number))
+                .collect::<Vec<_>>()
+        );
     }
 }

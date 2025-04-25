@@ -1,7 +1,9 @@
 use nom::branch::alt;
 use nom::bytes::complete::tag;
-use nom::character::complete::{alphanumeric1, newline, not_line_ending, space0, space1};
-use nom::combinator::{all_consuming, opt, recognize};
+use nom::character::complete::{
+    alphanumeric1, line_ending, multispace1, not_line_ending, space0, space1,
+};
+use nom::combinator::{all_consuming, opt, recognize, value, verify};
 use nom::multi::{many0, many1, separated_list1};
 use nom::sequence::{delimited, terminated};
 use nom::{IResult, Parser};
@@ -35,16 +37,25 @@ impl Import {
 
 pub fn parse_imports(s: &str) -> Result<Vec<Import>, String> {
     let s = Span::new(s);
-    let (_, result) = all_consuming(many0(parse_import_statement_list))
-        .parse(s)
-        .map_err(|e| e.to_string())?;
+    let (_, result) = all_consuming(many0(alt((
+        parse_import_statement_list,
+        value(vec![], space1),
+        value(vec![], parse_any_line),
+    ))))
+    .parse(s)
+    .map_err(|e| e.to_string())?;
     Ok(result.into_iter().flatten().collect())
 }
 
 fn parse_import_statement_list(s: Span) -> IResult<Span, Vec<Import>> {
     let (s, imports) = separated_list1(
         delimited(space0, tag(";"), space0),
-        alt((parse_import_statement, parse_from_import_statement)),
+        alt((
+            parse_import_statement,
+            parse_from_import_statement,
+            parse_multiline_from_import_statement,
+            parse_wildcard_from_import_statement,
+        )),
     )
     .parse(s)?;
     let (s, _) = (
@@ -52,7 +63,7 @@ fn parse_import_statement_list(s: Span) -> IResult<Span, Vec<Import>> {
         opt(tag(";")),
         opt(space0),
         opt(parse_comment),
-        opt(newline),
+        opt(line_ending),
     )
         .parse(s)?;
     Ok((s, imports.into_iter().flatten().collect()))
@@ -110,6 +121,68 @@ fn parse_from_import_statement(s: Span) -> IResult<Span, Vec<Import>> {
     ))
 }
 
+fn parse_multiline_from_import_statement(s: Span) -> IResult<Span, Vec<Import>> {
+    let (s, position) = position.parse(s)?;
+    let (s, _) = (tag("from"), space1).parse(s)?;
+    let (s, imported_module_base) = parse_relative_module.parse(s)?;
+    let (s, _) = (space1, tag("import"), space1).parse(s)?;
+
+    let (s, imported_identifiers) = delimited(
+        (tag("("), parse_multispace0_or_comment),
+        separated_list1(
+            delimited(
+                parse_multispace0_or_comment,
+                tag(","),
+                parse_multispace0_or_comment,
+            ),
+            terminated(
+                parse_identifier,
+                opt((multispace1, tag("as"), multispace1, parse_identifier)),
+            ),
+        ),
+        (
+            parse_multispace0_or_comment,
+            opt(tag(",")),
+            parse_multispace0_or_comment,
+            tag(")"),
+        ),
+    )
+    .parse(s)?;
+
+    Ok((
+        s,
+        imported_identifiers
+            .into_iter()
+            .map(|imported_identifier| {
+                let imported_object = if imported_module_base.ends_with(".") {
+                    format!("{}{}", imported_module_base, imported_identifier)
+                } else {
+                    format!("{}.{}", imported_module_base, imported_identifier)
+                };
+                Import::new(imported_object, position.location_line(), false)
+            })
+            .collect(),
+    ))
+}
+
+fn parse_wildcard_from_import_statement(s: Span) -> IResult<Span, Vec<Import>> {
+    let (s, position) = position.parse(s)?;
+    let (s, _) = (tag("from"), space1).parse(s)?;
+    let (s, imported_module) = parse_relative_module.parse(s)?;
+    let (s, _) = (space1, tag("import"), space1, tag("*")).parse(s)?;
+
+    let imported_object = if imported_module.ends_with(".") {
+        format!("{}*", imported_module)
+    } else {
+        format!("{}.*", imported_module)
+    };
+    Ok((s, vec![Import::new(
+        imported_object,
+        position.location_line(),
+        false,
+    )]))
+}
+
 fn parse_module(s: Span) -> IResult<Span, &str> {
     let (s, result) = recognize(separated_list1(tag("."), parse_identifier)).parse(s)?;
     Ok((s, result.fragment()))
@@ -131,6 +204,20 @@ fn parse_identifier(s: Span) -> IResult<Span, &str> {
 
 fn parse_comment(s: Span) -> IResult<Span, ()> {
     let (s, _) = (tag("#"), not_line_ending).parse(s)?;
+    Ok((s, ()))
+}
+
+fn parse_any_line(s: Span) -> IResult<Span, ()> {
+    let (s, _) = verify(
+        recognize((not_line_ending, opt(line_ending))),
+        |s: &Span| !s.is_empty(),
+    )
+    .parse(s)?;
+    Ok((s, ()))
+}
+
+fn parse_multispace0_or_comment(s: Span) -> IResult<Span, ()> {
+    let (s, _) = many0(alt((value((), multispace1), parse_comment))).parse(s)?;
     Ok((s, ()))
 }
 
@@ -430,6 +517,14 @@ import foo
 """
 import bar
 """
+import baz
+"#, &["foo", "baz"]),
+        
+        (r#"
+import foo
+"""
+import bar
+""" # foo
 import baz
 "#, &["foo", "baz"]),
 

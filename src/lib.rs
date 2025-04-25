@@ -3,7 +3,7 @@ use nom::bytes::complete::tag;
 use nom::character::complete::{alphanumeric1, newline, not_line_ending, space0, space1};
 use nom::combinator::{all_consuming, opt, recognize};
 use nom::multi::{many0, many1, separated_list1};
-use nom::sequence::{delimited, preceded, terminated};
+use nom::sequence::{delimited, terminated};
 use nom::{IResult, Parser};
 use nom_locate::{LocatedSpan, position};
 use std::borrow::Borrow;
@@ -42,74 +42,96 @@ pub fn parse_imports(s: &str) -> Result<Vec<Import>, String> {
 }
 
 fn parse_import_statement_list(s: Span) -> IResult<Span, Vec<Import>> {
-    let (rest, result) = terminated(
-        separated_list1(
-            delimited(space0, tag(";"), space0),
-            alt((parse_import_statement, parse_from_import_statement)),
-        ),
-        (
-            opt(space0),
-            opt(tag(";")),
-            opt(space0),
-            opt(parse_comment),
-            opt(newline),
-        ),
+    let (s, imports) = separated_list1(
+        delimited(space0, tag(";"), space0),
+        alt((parse_import_statement, parse_from_import_statement)),
     )
     .parse(s)?;
-    Ok((rest, result.into_iter().flatten().collect()))
+    let (s, _) = (
+        opt(space0),
+        opt(tag(";")),
+        opt(space0),
+        opt(parse_comment),
+        opt(newline),
+    )
+        .parse(s)?;
+    Ok((s, imports.into_iter().flatten().collect()))
 }
 
 fn parse_import_statement(s: Span) -> IResult<Span, Vec<Import>> {
-    let (rest, result) = preceded(
-        (tag("import"), space1),
-        separated_list1(
-            delimited(space0, tag(","), space0),
-            terminated(
-                (position, parse_module),
-                opt((space1, tag("as"), space1, parse_identifier)),
-            ),
+    let (s, position) = position.parse(s)?;
+    let (s, _) = (tag("import"), space1).parse(s)?;
+    let (s, imported_modules) = separated_list1(
+        delimited(space0, tag(","), space0),
+        terminated(
+            parse_module,
+            opt((space1, tag("as"), space1, parse_identifier)),
         ),
     )
     .parse(s)?;
     Ok((
-        rest,
-        result
+        s,
+        imported_modules
             .into_iter()
-            .map(|(span, module_name)| Import::new(module_name, span.location_line(), false))
+            .into_iter()
+            .map(|imported_module| Import::new(imported_module, position.location_line(), false))
             .collect(),
     ))
 }
 
 fn parse_from_import_statement(s: Span) -> IResult<Span, Vec<Import>> {
-    let (rest, result) = (
-        (tag("from"), space1),
-        parse_module,
-        (space1, tag("import"), space1),
-        (position, parse_identifier),
+    let (s, position) = position.parse(s)?;
+    let (s, _) = (tag("from"), space1).parse(s)?;
+    let (s, imported_module_base) = parse_relative_module.parse(s)?;
+    let (s, _) = (space1, tag("import"), space1).parse(s)?;
+
+    let (s, imported_identifiers) = separated_list1(
+        delimited(space0, tag(","), space0),
+        terminated(
+            parse_identifier,
+            opt((space1, tag("as"), space1, parse_identifier)),
+        ),
     )
-        .parse(s)?;
-    let (_, base_module_name, _, (span, identifier)) = result;
-    let module_name = format!("{}.{}", base_module_name, identifier);
-    Ok((rest, vec![Import::new(
-        module_name,
-        span.location_line(),
-        false,
-    )]))
+    .parse(s)?;
+
+    Ok((
+        s,
+        imported_identifiers
+            .into_iter()
+            .map(|imported_identifier| {
+                let imported_object = if imported_module_base.ends_with(".") {
+                    format!("{}{}", imported_module_base, imported_identifier)
+                } else {
+                    format!("{}.{}", imported_module_base, imported_identifier)
+                };
+                Import::new(imported_object, position.location_line(), false)
+            })
+            .collect(),
+    ))
 }
 
 fn parse_module(s: Span) -> IResult<Span, &str> {
-    let (rest, result) = recognize(separated_list1(tag("."), parse_identifier)).parse(s)?;
-    Ok((rest, result.fragment()))
+    let (s, result) = recognize(separated_list1(tag("."), parse_identifier)).parse(s)?;
+    Ok((s, result.fragment()))
+}
+
+fn parse_relative_module(s: Span) -> IResult<Span, &str> {
+    let (s, result) = alt((
+        recognize((many0(tag(".")), parse_module)),
+        recognize(many1(tag("."))),
+    ))
+    .parse(s)?;
+    Ok((s, result.fragment()))
 }
 
 fn parse_identifier(s: Span) -> IResult<Span, &str> {
-    let (rest, result) = recognize(many1(alt((alphanumeric1, tag("_"))))).parse(s)?;
-    Ok((rest, result.fragment()))
+    let (s, result) = recognize(many1(alt((alphanumeric1, tag("_"))))).parse(s)?;
+    Ok((s, result.fragment()))
 }
 
 fn parse_comment(s: Span) -> IResult<Span, ()> {
-    let (rest, _) = (tag("#"), not_line_ending).parse(s)?;
-    Ok((rest, ()))
+    let (s, _) = (tag("#"), not_line_ending).parse(s)?;
+    Ok((s, ()))
 }
 
 #[cfg(test)]

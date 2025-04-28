@@ -31,8 +31,6 @@ impl Import {
     }
 }
 
-// TODO Remove grammar.pest
-
 pub fn parse_imports(s: &str) -> Result<Vec<Import>, String> {
     let s = Span::new(s);
     let (_, result) = all_consuming(many0(alt((

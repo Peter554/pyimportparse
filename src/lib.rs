@@ -1,5 +1,5 @@
 use nom::branch::alt;
-use nom::bytes::complete::tag;
+use nom::bytes::complete::{tag, take_until};
 use nom::character::complete::{
     alphanumeric1, line_ending, multispace1, not_line_ending, space0, space1,
 };
@@ -38,9 +38,12 @@ impl Import {
 pub fn parse_imports(s: &str) -> Result<Vec<Import>, String> {
     let s = Span::new(s);
     let (_, result) = all_consuming(many0(alt((
-        parse_import_statement_list,
         value(vec![], space1),
-        value(vec![], parse_any_line),
+        value(vec![], line_ending),
+        value(vec![], parse_multiline_comment),
+        value(vec![], parse_comment),
+        parse_import_statement_list,
+        value(vec![], verify(not_line_ending, |s: &Span| !s.is_empty())),
     ))))
     .parse(s)
     .map_err(|e| e.to_string())?;
@@ -58,14 +61,7 @@ fn parse_import_statement_list(s: Span) -> IResult<Span, Vec<Import>> {
         )),
     )
     .parse(s)?;
-    let (s, _) = (
-        opt(space0),
-        opt(tag(";")),
-        opt(space0),
-        opt(parse_comment),
-        opt(line_ending),
-    )
-        .parse(s)?;
+    let (s, _) = (opt(space0), opt(tag(";"))).parse(s)?;
     Ok((s, imports.into_iter().flatten().collect()))
 }
 
@@ -83,7 +79,6 @@ fn parse_import_statement(s: Span) -> IResult<Span, Vec<Import>> {
     Ok((
         s,
         imported_modules
-            .into_iter()
             .into_iter()
             .map(|imported_module| Import::new(imported_module, position.location_line(), false))
             .collect(),
@@ -207,17 +202,17 @@ fn parse_comment(s: Span) -> IResult<Span, ()> {
     Ok((s, ()))
 }
 
-fn parse_any_line(s: Span) -> IResult<Span, ()> {
-    let (s, _) = verify(
-        recognize((not_line_ending, opt(line_ending))),
-        |s: &Span| !s.is_empty(),
-    )
-    .parse(s)?;
+fn parse_multispace0_or_comment(s: Span) -> IResult<Span, ()> {
+    let (s, _) = many0(alt((value((), multispace1), parse_comment))).parse(s)?;
     Ok((s, ()))
 }
 
-fn parse_multispace0_or_comment(s: Span) -> IResult<Span, ()> {
-    let (s, _) = many0(alt((value((), multispace1), parse_comment))).parse(s)?;
+fn parse_multiline_comment(s: Span) -> IResult<Span, ()> {
+    let (s, _) = alt((
+        delimited(tag(r#"""""#), take_until(r#"""""#), tag(r#"""""#)),
+        delimited(tag(r#"'''"#), take_until(r#"'''"#), tag(r#"'''"#)),
+    ))
+    .parse(s)?;
     Ok((s, ()))
 }
 
@@ -519,7 +514,7 @@ import bar
 """
 import baz
 "#, &["foo", "baz"]),
-        
+
         (r#"
 import foo
 """

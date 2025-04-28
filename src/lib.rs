@@ -3,7 +3,7 @@ use nom::bytes::complete::{tag, take_until};
 use nom::character::complete::{alphanumeric1, line_ending, multispace1, not_line_ending, space1};
 use nom::combinator::{all_consuming, opt, recognize, value, verify};
 use nom::multi::{many0, many1, separated_list1};
-use nom::sequence::{delimited, terminated};
+use nom::sequence::{delimited, preceded, terminated};
 use nom::{IResult, Parser};
 use nom_locate::{LocatedSpan, position};
 use std::borrow::Borrow;
@@ -42,6 +42,7 @@ pub fn parse_imports(s: &str) -> Result<Vec<Import>, String> {
 fn parse_block(typechecking_only: bool) -> impl Fn(Span) -> IResult<Span, Vec<Import>> {
     move |s| {
         let (s, result) = many0(alt((
+            parse_if_typechecking,
             value(vec![], parse_space1),
             value(vec![], line_ending),
             value(vec![], parse_multiline_comment),
@@ -248,6 +249,31 @@ fn parse_space0(s: Span) -> IResult<Span, ()> {
 fn parse_space1(s: Span) -> IResult<Span, ()> {
     let (s, _) = many1(alt((space1, tag("\\\n")))).parse(s)?;
     Ok((s, ()))
+}
+
+fn parse_if_typechecking(s: Span) -> IResult<Span, Vec<Import>> {
+    let (s, _) = (
+        tag("if"),
+        parse_space1,
+        alt((tag("TYPE_CHECKING"), tag("typing.TYPE_CHECKING"))),
+        parse_space0,
+        tag(":"),
+    )
+        .parse(s)?;
+
+    if let Ok((s, imports)) = preceded(
+        parse_space0,
+        terminated(
+            parse_import_statement_list(true),
+            (parse_space0, opt(parse_comment)),
+        ),
+    )
+    .parse(s)
+    {
+        return Ok((s, imports));
+    };
+
+    todo!()
 }
 
 #[cfg(test)]

@@ -285,13 +285,17 @@ fn parse_indented_block(s: Span) -> IResult<Span, Span> {
     let input = s;
 
     let (s, _) = many0((space0, line_ending)).parse(s)?;
-    let (s, (indentation, _, _)) = (space1, not_line_ending, line_ending).parse(s)?;
+    let (s, (indentation, _, _)) = (space1, not_line_ending, opt(line_ending)).parse(s)?;
 
     let (s, _) = many0(alt((
         value((), (space0, line_ending)),
         value(
             (),
-            (tag(*indentation.fragment()), not_line_ending, line_ending),
+            (
+                tag(*indentation.fragment()),
+                not_line_ending,
+                opt(line_ending),
+            ),
         ),
     )))
     .parse(s)?;
@@ -638,6 +642,32 @@ from f import *",
             imports
                 .into_iter()
                 .map(|i| (i.imported_object, i.line_number))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_line_numbers_if_typechecking() {
+        let imports = parse_imports(
+            "
+import a
+if TYPE_CHECKING:
+    from b import c
+from d import (e)
+if TYPE_CHECKING:
+    from f import *",
+        )
+        .unwrap();
+        assert_eq!(
+            vec![
+                ("a".to_owned(), 2_u32, false),
+                ("b.c".to_owned(), 4_u32, true),
+                ("d.e".to_owned(), 5_u32, false),
+                ("f.*".to_owned(), 7_u32, true),
+            ],
+            imports
+                .into_iter()
+                .map(|i| (i.imported_object, i.line_number, i.typechecking_only))
                 .collect::<Vec<_>>()
         );
     }

@@ -1,12 +1,16 @@
-#![doc = include_str!("../README.md")]
+use nom::branch::alt;
+use nom::bytes::complete::{tag, take_until};
+use nom::character::complete::{
+    alphanumeric1, line_ending, multispace1, not_line_ending, space0, space1,
+};
+use nom::combinator::{all_consuming, opt, recognize, value, verify};
+use nom::multi::{many0, many1, separated_list1};
+use nom::sequence::{delimited, preceded, terminated};
+use nom::{IResult, Input, Parser};
+use nom_locate::{LocatedSpan, position};
+use std::borrow::Borrow;
 
-use pest::Parser;
-use pest::iterators::Pair;
-use pest_derive::Parser;
-
-#[derive(Parser)]
-#[grammar = "grammar.pest"]
-struct GrammarParser;
+type Span<'a> = LocatedSpan<&'a str>;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Import {
@@ -16,129 +20,287 @@ pub struct Import {
 }
 
 impl Import {
-    pub fn new(imported_object: &str, line_number: u32, typechecking_only: bool) -> Self {
+    pub fn new<B: Borrow<str>>(
+        imported_object: B,
+        line_number: u32,
+        typechecking_only: bool,
+    ) -> Self {
         Self {
-            imported_object: imported_object.to_owned(),
+            imported_object: imported_object.borrow().to_owned(),
             line_number,
             typechecking_only,
         }
     }
 }
 
-#[derive(Debug)]
-struct ParseContext {
-    typechecking_only: bool,
+pub fn parse_imports(s: &str) -> Result<Vec<Import>, String> {
+    let s = Span::new(s);
+    let (_, result) = all_consuming(parse_block(false))
+        .parse(s)
+        .map_err(|e| e.to_string())?;
+    Ok(result)
 }
 
-pub fn parse_imports(code: &str) -> Result<Vec<Import>, String> {
-    let pair = GrammarParser::parse(Rule::CODE, code)
-        .map_err(|e| format!("failed to parse: {}", e))?
-        .next()
-        .unwrap();
-
-    let mut context = ParseContext {
-        typechecking_only: false,
-    };
-
-    Ok(parse_pair(pair, &mut context))
-}
-
-fn parse_pair(pair: Pair<Rule>, context: &mut ParseContext) -> Vec<Import> {
-    match pair.as_rule() {
-        Rule::CODE
-        | Rule::FRAGMENT
-        | Rule::IMPORT_STATEMENT_LIST
-        | Rule::IF_TYPECHECKING_FRAGMENT => parse_inner_pairs(pair, context),
-        Rule::IF_TYPECHECKING | Rule::SINGLELINE_IF_TYPECHECKING => {
-            context.typechecking_only = true;
-            let imports = parse_inner_pairs(pair, context);
-            context.typechecking_only = false;
-            imports
-        }
-        Rule::SIMPLE_IMPORT_STATEMENT => parse_simple_import_statement(pair, context),
-        Rule::FROM_IMPORT_STATEMENT | Rule::MULTILINE_FROM_IMPORT_STATEMENT => {
-            parse_from_import_statement(pair, context)
-        }
-        Rule::WILDCARD_FROM_IMPORT_STATEMENT => parse_wildcard_from_import_statement(pair, context),
-        Rule::MULTILINE_STRING => {
-            vec![]
-        }
-        Rule::EOI => {
-            vec![]
-        }
-        _ => unreachable!("{:?}", pair.as_rule()),
+fn parse_block(typechecking_only: bool) -> impl Fn(Span) -> IResult<Span, Vec<Import>> {
+    move |s| {
+        let (s, result) = many0(alt((
+            parse_if_typechecking,
+            value(vec![], parse_space1),
+            value(vec![], line_ending),
+            value(vec![], parse_multiline_comment),
+            value(vec![], parse_comment),
+            parse_import_statement_list(typechecking_only),
+            value(vec![], verify(not_line_ending, |s: &Span| !s.is_empty())),
+        )))
+        .parse(s)?;
+        Ok((s, result.into_iter().flatten().collect()))
     }
 }
 
-fn parse_inner_pairs(pair: Pair<Rule>, context: &mut ParseContext) -> Vec<Import> {
-    pair.into_inner().fold(vec![], |mut imports, inner_pair| {
-        imports.extend(parse_pair(inner_pair, context));
-        imports
-    })
+fn parse_import_statement_list(
+    typechecking_only: bool,
+) -> impl Fn(Span) -> IResult<Span, Vec<Import>> {
+    move |s| {
+        let (s, imports) = separated_list1(
+            delimited(parse_space0, tag(";"), parse_space0),
+            alt((
+                parse_import_statement(typechecking_only),
+                parse_from_import_statement(typechecking_only),
+                parse_multiline_from_import_statement(typechecking_only),
+                parse_wildcard_from_import_statement(typechecking_only),
+            )),
+        )
+        .parse(s)?;
+        let (s, _) = (opt(parse_space0), opt(tag(";"))).parse(s)?;
+        Ok((s, imports.into_iter().flatten().collect()))
+    }
 }
 
-fn parse_simple_import_statement(pair: Pair<Rule>, context: &mut ParseContext) -> Vec<Import> {
-    let (line_number, _) = pair.line_col();
-
-    pair.into_inner()
-        .flat_map(|inner_pair| match inner_pair.as_rule() {
-            Rule::MODULE => {
-                let imported_object = inner_pair.as_str().to_owned();
-                Some(Import {
-                    imported_object,
-                    line_number: line_number as u32,
-                    typechecking_only: context.typechecking_only,
+fn parse_import_statement(typechecking_only: bool) -> impl Fn(Span) -> IResult<Span, Vec<Import>> {
+    move |s| {
+        let (s, position) = position.parse(s)?;
+        let (s, _) = (tag("import"), parse_space1).parse(s)?;
+        let (s, imported_modules) = separated_list1(
+            delimited(parse_space0, tag(","), parse_space0),
+            terminated(
+                parse_module,
+                opt((parse_space1, tag("as"), parse_space1, parse_identifier)),
+            ),
+        )
+        .parse(s)?;
+        Ok((
+            s,
+            imported_modules
+                .into_iter()
+                .map(|imported_module| {
+                    Import::new(imported_module, position.location_line(), typechecking_only)
                 })
-            }
-            Rule::AS_IDENTIFIER => None,
-            _ => unreachable!("{:?}", inner_pair.as_rule()),
-        })
-        .collect()
+                .collect(),
+        ))
+    }
 }
 
-fn parse_from_import_statement(pair: Pair<Rule>, context: &mut ParseContext) -> Vec<Import> {
-    let (line_number, _) = pair.line_col();
-    let mut inner_pairs = pair.into_inner();
-    let imported_base = {
-        let mut imported_base = inner_pairs.next().unwrap().as_str();
-        if imported_base.ends_with(".") {
-            imported_base = imported_base.strip_suffix(".").unwrap();
-        }
-        imported_base
-    };
+fn parse_from_import_statement(
+    typechecking_only: bool,
+) -> impl Fn(Span) -> IResult<Span, Vec<Import>> {
+    move |s| {
+        let (s, position) = position.parse(s)?;
+        let (s, _) = (tag("from"), parse_space1).parse(s)?;
+        let (s, imported_module_base) = parse_relative_module.parse(s)?;
+        let (s, _) = (parse_space1, tag("import"), parse_space1).parse(s)?;
 
-    inner_pairs
-        .filter_map(|inner_pair| match inner_pair.as_rule() {
-            Rule::IDENTIFIER => {
-                let imported_object = format!("{}.{}", imported_base, inner_pair.as_str());
-                Some(Import {
-                    imported_object,
-                    line_number: line_number as u32,
-                    typechecking_only: context.typechecking_only,
+        let (s, imported_identifiers) = separated_list1(
+            delimited(parse_space0, tag(","), parse_space0),
+            terminated(
+                parse_identifier,
+                opt((parse_space1, tag("as"), parse_space1, parse_identifier)),
+            ),
+        )
+        .parse(s)?;
+
+        Ok((
+            s,
+            imported_identifiers
+                .into_iter()
+                .map(|imported_identifier| {
+                    let imported_object = if imported_module_base.ends_with(".") {
+                        format!("{}{}", imported_module_base, imported_identifier)
+                    } else {
+                        format!("{}.{}", imported_module_base, imported_identifier)
+                    };
+                    Import::new(imported_object, position.location_line(), typechecking_only)
                 })
-            }
-            Rule::AS_IDENTIFIER => None,
-            _ => unreachable!("{:?}", inner_pair.as_rule()),
-        })
-        .collect()
+                .collect(),
+        ))
+    }
+}
+
+fn parse_multiline_from_import_statement(
+    typechecking_only: bool,
+) -> impl Fn(Span) -> IResult<Span, Vec<Import>> {
+    move |s| {
+        let (s, position) = position.parse(s)?;
+        let (s, _) = (tag("from"), parse_space1).parse(s)?;
+        let (s, imported_module_base) = parse_relative_module.parse(s)?;
+        let (s, _) = (parse_space1, tag("import"), parse_space1).parse(s)?;
+
+        let (s, imported_identifiers) = delimited(
+            (tag("("), parse_multispace0_or_comment),
+            separated_list1(
+                delimited(
+                    parse_multispace0_or_comment,
+                    tag(","),
+                    parse_multispace0_or_comment,
+                ),
+                terminated(
+                    parse_identifier,
+                    opt((multispace1, tag("as"), multispace1, parse_identifier)),
+                ),
+            ),
+            (
+                parse_multispace0_or_comment,
+                opt(tag(",")),
+                parse_multispace0_or_comment,
+                tag(")"),
+            ),
+        )
+        .parse(s)?;
+
+        Ok((
+            s,
+            imported_identifiers
+                .into_iter()
+                .map(|imported_identifier| {
+                    let imported_object = if imported_module_base.ends_with(".") {
+                        format!("{}{}", imported_module_base, imported_identifier)
+                    } else {
+                        format!("{}.{}", imported_module_base, imported_identifier)
+                    };
+                    Import::new(imported_object, position.location_line(), typechecking_only)
+                })
+                .collect(),
+        ))
+    }
 }
 
 fn parse_wildcard_from_import_statement(
-    pair: Pair<Rule>,
-    context: &mut ParseContext,
-) -> Vec<Import> {
-    let (line_number, _) = pair.line_col();
-    let mut inner_pairs = pair.into_inner();
-    let mut imported_l = inner_pairs.next().unwrap().as_str();
-    if imported_l.ends_with(".") {
-        imported_l = imported_l.strip_suffix(".").unwrap();
+    typechecking_only: bool,
+) -> impl Fn(Span) -> IResult<Span, Vec<Import>> {
+    move |s| {
+        let (s, position) = position.parse(s)?;
+        let (s, _) = (tag("from"), parse_space1).parse(s)?;
+        let (s, imported_module) = parse_relative_module.parse(s)?;
+        let (s, _) = (parse_space1, tag("import"), parse_space1, tag("*")).parse(s)?;
+
+        let imported_object = if imported_module.ends_with(".") {
+            format!("{}*", imported_module)
+        } else {
+            format!("{}.*", imported_module)
+        };
+        Ok((s, vec![Import::new(
+            imported_object,
+            position.location_line(),
+            typechecking_only,
+        )]))
     }
-    let imported = format!("{}.*", imported_l);
-    vec![Import {
-        imported_object: imported.to_string(),
-        line_number: line_number as u32,
-        typechecking_only: context.typechecking_only,
-    }]
+}
+
+fn parse_module(s: Span) -> IResult<Span, &str> {
+    let (s, result) = recognize(separated_list1(tag("."), parse_identifier)).parse(s)?;
+    Ok((s, result.fragment()))
+}
+
+fn parse_relative_module(s: Span) -> IResult<Span, &str> {
+    let (s, result) = alt((
+        recognize((many0(tag(".")), parse_module)),
+        recognize(many1(tag("."))),
+    ))
+    .parse(s)?;
+    Ok((s, result.fragment()))
+}
+
+fn parse_identifier(s: Span) -> IResult<Span, &str> {
+    let (s, result) = recognize(many1(alt((alphanumeric1, tag("_"))))).parse(s)?;
+    Ok((s, result.fragment()))
+}
+
+fn parse_comment(s: Span) -> IResult<Span, ()> {
+    let (s, _) = (tag("#"), not_line_ending).parse(s)?;
+    Ok((s, ()))
+}
+
+fn parse_multispace0_or_comment(s: Span) -> IResult<Span, ()> {
+    let (s, _) = many0(alt((value((), multispace1), parse_comment))).parse(s)?;
+    Ok((s, ()))
+}
+
+fn parse_multiline_comment(s: Span) -> IResult<Span, ()> {
+    let (s, _) = alt((
+        delimited(tag(r#"""""#), take_until(r#"""""#), tag(r#"""""#)),
+        delimited(tag(r#"'''"#), take_until(r#"'''"#), tag(r#"'''"#)),
+    ))
+    .parse(s)?;
+    Ok((s, ()))
+}
+
+fn parse_space0(s: Span) -> IResult<Span, ()> {
+    let (s, _) = many0(alt((space1, tag("\\\n")))).parse(s)?;
+    Ok((s, ()))
+}
+
+fn parse_space1(s: Span) -> IResult<Span, ()> {
+    let (s, _) = many1(alt((space1, tag("\\\n")))).parse(s)?;
+    Ok((s, ()))
+}
+
+fn parse_if_typechecking(s: Span) -> IResult<Span, Vec<Import>> {
+    let (s, _) = (
+        tag("if"),
+        parse_space1,
+        alt((tag("TYPE_CHECKING"), tag("typing.TYPE_CHECKING"))),
+        parse_space0,
+        tag(":"),
+    )
+        .parse(s)?;
+
+    if let Ok((s, imports)) = preceded(
+        parse_space0,
+        terminated(
+            parse_import_statement_list(true),
+            (parse_space0, opt(parse_comment)),
+        ),
+    )
+    .parse(s)
+    {
+        return Ok((s, imports));
+    };
+
+    let (s, _) = (parse_space0, opt(parse_comment), line_ending).parse(s)?;
+    let (s, indented_block) = parse_indented_block.parse(s)?;
+    let (_, imports) = all_consuming(parse_block(true)).parse(indented_block)?;
+    Ok((s, imports))
+}
+
+fn parse_indented_block(s: Span) -> IResult<Span, Span> {
+    let input = s;
+
+    let (s, _) = many0((space0, line_ending)).parse(s)?;
+    let (s, (indentation, _, _)) = (space1, not_line_ending, opt(line_ending)).parse(s)?;
+
+    let (s, _) = many0(alt((
+        value((), (space0, line_ending)),
+        value(
+            (),
+            (
+                tag(*indentation.fragment()),
+                not_line_ending,
+                opt(line_ending),
+            ),
+        ),
+    )))
+    .parse(s)?;
+
+    Ok(input.take_split(s.location_offset() - input.location_offset()))
 }
 
 #[cfg(test)]
@@ -190,7 +352,7 @@ mod tests {
         ("import  foo  as  FOO ,  bar  as  BAR", &["foo", "bar"]),
         ("import foo # Comment", &["foo"]),
     })]
-    fn test_parse_simple_import_statement(case: (&str, &[&str])) {
+    fn test_parse_import_statement(case: (&str, &[&str])) {
         parse_and_check(case);
     }
 
@@ -442,6 +604,14 @@ import baz
 
         (r#"
 import foo
+"""
+import bar
+""" # foo
+import baz
+"#, &["foo", "baz"]),
+
+        (r#"
+import foo
 '''
 import bar
 '''
@@ -472,6 +642,32 @@ from f import *",
             imports
                 .into_iter()
                 .map(|i| (i.imported_object, i.line_number))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_line_numbers_if_typechecking() {
+        let imports = parse_imports(
+            "
+import a
+if TYPE_CHECKING:
+    from b import c
+from d import (e)
+if TYPE_CHECKING:
+    from f import *",
+        )
+        .unwrap();
+        assert_eq!(
+            vec![
+                ("a".to_owned(), 2_u32, false),
+                ("b.c".to_owned(), 4_u32, true),
+                ("d.e".to_owned(), 5_u32, false),
+                ("f.*".to_owned(), 7_u32, true),
+            ],
+            imports
+                .into_iter()
+                .map(|i| (i.imported_object, i.line_number, i.typechecking_only))
                 .collect::<Vec<_>>()
         );
     }

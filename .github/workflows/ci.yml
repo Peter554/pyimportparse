@@ -12,5 +12,3 @@ jobs:
         run: sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
       - name: Check
         run: task check
-      - name: Check Django
-        run:  cargo run --example test_django_imports

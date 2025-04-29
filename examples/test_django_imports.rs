@@ -48,7 +48,7 @@ fn main() {
         imports_data.data.keys().collect::<HashSet<_>>()
     );
     for key in expected_imports_data.data.keys() {
-        println!("{}", key);
+        // println!("{}", key);
         assert_eq!(
             expected_imports_data
                 .data

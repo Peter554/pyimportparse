@@ -197,11 +197,14 @@ fn parse_wildcard_from_import_statement(
         } else {
             format!("{}.*", imported_module)
         };
-        Ok((s, vec![Import::new(
-            imported_object,
-            position.location_line(),
-            typechecking_only,
-        )]))
+        Ok((
+            s,
+            vec![Import::new(
+                imported_object,
+                position.location_line(),
+                typechecking_only,
+            )],
+        ))
     }
 }
 

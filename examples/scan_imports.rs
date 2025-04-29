@@ -12,10 +12,10 @@ use pyimportparse::{Import, parse_imports};
 fn main() {
     let path: PathBuf = args().nth(1).expect("Path missing").into();
 
+    let start = Instant::now();
     let modules_paths_to_scan = WalkDir::new(path)
         .into_iter()
-        // Do not descent into hidden directories.
-        .filter_entry(|e| !is_hidden(e))
+        .filter_entry(|e| !is_hidden(e) && !is_node_modules(e))
         .filter_map(|entry| {
             let entry = entry.unwrap();
             if entry.file_type().is_dir() {
@@ -27,6 +27,8 @@ fn main() {
             Some(entry.path().to_owned())
         })
         .collect::<Vec<_>>();
+    let duration = start.elapsed();
+    println!("Time to discover modules: {:?}", duration);
 
     let start = Instant::now();
     let imports: HashMap<String, Vec<Import>> = modules_paths_to_scan
@@ -82,6 +84,14 @@ fn is_hidden(entry: &DirEntry) -> bool {
         .file_name()
         .to_str()
         .map(|s| s.starts_with("."))
+        .unwrap_or(false)
+}
+
+fn is_node_modules(entry: &DirEntry) -> bool {
+    entry
+        .file_name()
+        .to_str()
+        .map(|s| s == "node_modules")
         .unwrap_or(false)
 }
 

@@ -1,10 +1,12 @@
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_until};
-use nom::character::complete::{alphanumeric1, line_ending, multispace1, not_line_ending, space1};
+use nom::character::complete::{
+    alphanumeric1, line_ending, multispace1, not_line_ending, space0, space1,
+};
 use nom::combinator::{all_consuming, opt, recognize, value, verify};
 use nom::multi::{many0, many1, separated_list1};
 use nom::sequence::{delimited, preceded, terminated};
-use nom::{IResult, Parser};
+use nom::{IResult, Input, Parser};
 use nom_locate::{LocatedSpan, position};
 use std::borrow::Borrow;
 
@@ -273,7 +275,28 @@ fn parse_if_typechecking(s: Span) -> IResult<Span, Vec<Import>> {
         return Ok((s, imports));
     };
 
-    todo!()
+    let (s, _) = (parse_space0, opt(parse_comment), line_ending).parse(s)?;
+    let (s, indented_block) = parse_indented_block.parse(s)?;
+    let (_, imports) = all_consuming(parse_block(true)).parse(indented_block)?;
+    Ok((s, imports))
+}
+
+fn parse_indented_block(s: Span) -> IResult<Span, Span> {
+    let input = s;
+
+    let (s, _) = many0((space0, line_ending)).parse(s)?;
+    let (s, (indentation, _, _)) = (space1, not_line_ending, line_ending).parse(s)?;
+
+    let (s, _) = many0(alt((
+        value((), (space0, line_ending)),
+        value(
+            (),
+            (tag(*indentation.fragment()), not_line_ending, line_ending),
+        ),
+    )))
+    .parse(s)?;
+
+    Ok(input.take_split(s.location_offset() - input.location_offset()))
 }
 
 #[cfg(test)]

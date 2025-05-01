@@ -31,14 +31,14 @@ def foo():
 let imports = parse_imports(&code).unwrap();
     
 assert_eq!(vec![
-    // (imported_object, line_number, typechecking_only)
-    Import::new("a", 2, false),
-    Import::new("b.c", 3, false),
-    Import::new(".d.e", 4, false),
-    Import::new(".d.f", 4, false),
-    Import::new("..g.*", 5, false),
-    Import::new("h", 8, true),
-    Import::new("i", 11, false),
+    // (imported_object, line_number, line_contents, typechecking_only)
+    Import::new("a".to_owned(), 2, "import a".to_owned(), false),
+    Import::new("b.c".to_owned(), 3, "from b import c".to_owned(), false),
+    Import::new(".d.e".to_owned(), 4, "from .d import (e, f)".to_owned(), false),
+    Import::new(".d.f".to_owned(), 4, "from .d import (e, f)".to_owned(), false),
+    Import::new("..g.*".to_owned(), 5, "from ..g import *".to_owned(), false),
+    Import::new("h".to_owned(), 8, "import h".to_owned(), true),
+    Import::new("i".to_owned(), 11, "import i".to_owned(), false),
 ], imports);
 
 

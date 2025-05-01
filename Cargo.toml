@@ -1,7 +1,7 @@
 [package]
 name = "pyimportparse"
 description = "A rust crate to parse python imports"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/Peter554/pyimportparse/"

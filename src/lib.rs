@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_until};
 use nom::character::complete::{
@@ -8,7 +10,6 @@ use nom::multi::{many0, many1, separated_list1};
 use nom::sequence::{delimited, preceded, terminated};
 use nom::{IResult, Input, Parser};
 use nom_locate::{LocatedSpan, position};
-use std::borrow::Borrow;
 
 type Span<'a> = LocatedSpan<&'a str>;
 
@@ -16,18 +17,21 @@ type Span<'a> = LocatedSpan<&'a str>;
 pub struct Import {
     pub imported_object: String,
     pub line_number: u32,
+    pub line_contents: String,
     pub typechecking_only: bool,
 }
 
 impl Import {
-    pub fn new<B: Borrow<str>>(
-        imported_object: B,
+    pub fn new(
+        imported_object: String,
         line_number: u32,
+        line_contents: String,
         typechecking_only: bool,
     ) -> Self {
         Self {
-            imported_object: imported_object.borrow().to_owned(),
+            imported_object,
             line_number,
+            line_contents,
             typechecking_only,
         }
     }
@@ -78,6 +82,7 @@ fn parse_import_statement_list(
 
 fn parse_import_statement(typechecking_only: bool) -> impl Fn(Span) -> IResult<Span, Vec<Import>> {
     move |s| {
+        let input = s;
         let (s, position) = position.parse(s)?;
         let (s, _) = (tag("import"), parse_space1).parse(s)?;
         let (s, imported_modules) = separated_list1(
@@ -88,12 +93,19 @@ fn parse_import_statement(typechecking_only: bool) -> impl Fn(Span) -> IResult<S
             ),
         )
         .parse(s)?;
+
+        let (_, span) = input.take_split(s.location_offset() - input.location_offset());
         Ok((
             s,
             imported_modules
                 .into_iter()
                 .map(|imported_module| {
-                    Import::new(imported_module, position.location_line(), typechecking_only)
+                    Import::new(
+                        imported_module.to_owned(),
+                        position.location_line(),
+                        (*span.fragment()).to_owned(),
+                        typechecking_only,
+                    )
                 })
                 .collect(),
         ))
@@ -104,6 +116,7 @@ fn parse_from_import_statement(
     typechecking_only: bool,
 ) -> impl Fn(Span) -> IResult<Span, Vec<Import>> {
     move |s| {
+        let input = s;
         let (s, position) = position.parse(s)?;
         let (s, _) = (tag("from"), parse_space1).parse(s)?;
         let (s, imported_module_base) = parse_relative_module.parse(s)?;
@@ -118,6 +131,7 @@ fn parse_from_import_statement(
         )
         .parse(s)?;
 
+        let (_, span) = input.take_split(s.location_offset() - input.location_offset());
         Ok((
             s,
             imported_identifiers
@@ -128,7 +142,12 @@ fn parse_from_import_statement(
                     } else {
                         format!("{}.{}", imported_module_base, imported_identifier)
                     };
-                    Import::new(imported_object, position.location_line(), typechecking_only)
+                    Import::new(
+                        imported_object,
+                        position.location_line(),
+                        (*span.fragment()).to_owned(),
+                        typechecking_only,
+                    )
                 })
                 .collect(),
         ))
@@ -139,6 +158,7 @@ fn parse_multiline_from_import_statement(
     typechecking_only: bool,
 ) -> impl Fn(Span) -> IResult<Span, Vec<Import>> {
     move |s| {
+        let input = s;
         let (s, position) = position.parse(s)?;
         let (s, _) = (tag("from"), parse_space1).parse(s)?;
         let (s, imported_module_base) = parse_relative_module.parse(s)?;
@@ -166,6 +186,7 @@ fn parse_multiline_from_import_statement(
         )
         .parse(s)?;
 
+        let (_, span) = input.take_split(s.location_offset() - input.location_offset());
         Ok((
             s,
             imported_identifiers
@@ -176,7 +197,12 @@ fn parse_multiline_from_import_statement(
                     } else {
                         format!("{}.{}", imported_module_base, imported_identifier)
                     };
-                    Import::new(imported_object, position.location_line(), typechecking_only)
+                    Import::new(
+                        imported_object,
+                        position.location_line(),
+                        (*span.fragment()).to_owned(),
+                        typechecking_only,
+                    )
                 })
                 .collect(),
         ))
@@ -187,6 +213,7 @@ fn parse_wildcard_from_import_statement(
     typechecking_only: bool,
 ) -> impl Fn(Span) -> IResult<Span, Vec<Import>> {
     move |s| {
+        let input = s;
         let (s, position) = position.parse(s)?;
         let (s, _) = (tag("from"), parse_space1).parse(s)?;
         let (s, imported_module) = parse_relative_module.parse(s)?;
@@ -197,11 +224,14 @@ fn parse_wildcard_from_import_statement(
         } else {
             format!("{}.*", imported_module)
         };
+
+        let (_, span) = input.take_split(s.location_offset() - input.location_offset());
         Ok((
             s,
             vec![Import::new(
                 imported_object,
                 position.location_line(),
+                (*span.fragment()).to_owned(),
                 typechecking_only,
             )],
         ))
@@ -671,6 +701,30 @@ if TYPE_CHECKING:
             imports
                 .into_iter()
                 .map(|i| (i.imported_object, i.line_number, i.typechecking_only))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_line_contents() {
+        let imports = parse_imports(
+            "
+import a
+from b import c
+from d import (e)
+from f import *",
+        )
+        .unwrap();
+        assert_eq!(
+            vec![
+                ("a".to_owned(), "import a".to_owned()),
+                ("b.c".to_owned(), "from b import c".to_owned()),
+                ("d.e".to_owned(), "from d import (e)".to_owned()),
+                ("f.*".to_owned(), "from f import *".to_owned()),
+            ],
+            imports
+                .into_iter()
+                .map(|i| (i.imported_object, i.line_contents))
                 .collect::<Vec<_>>()
         );
     }

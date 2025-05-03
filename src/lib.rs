@@ -61,6 +61,8 @@ fn parse_block(typechecking_only: bool) -> impl Fn(Span) -> IResult<Span, Vec<Im
                     |s: &Span| !s.is_empty(),
                 ),
             ),
+            // Eat the rest of the line, to stop the parser getting stuck by e.g. `print("'''")`
+            value(vec![], verify(not_line_ending, |s: &Span| !s.is_empty())),
         )))
         .parse(s)?;
         Ok((s, result.into_iter().flatten().collect()))
@@ -666,6 +668,23 @@ import baz
 "#, &["foo", "baz"]),
     })]
     fn test_multiline_strings(case: (&str, &[&str])) {
+        parse_and_check(case);
+    }
+
+    #[parameterized(case = {
+        (r#"
+import foo
+x = 42 # """
+import bar
+"#, &["foo", "bar"]),
+
+(r#"
+import foo
+print('"""')
+import bar
+"#, &["foo", "bar"]),
+    })]
+    fn test_weird_inputs(case: (&str, &[&str])) {
         parse_and_check(case);
     }
 

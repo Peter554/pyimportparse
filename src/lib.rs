@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 
+use lazy_static::lazy_static;
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_until};
 use nom::character::complete::{
@@ -10,6 +11,12 @@ use nom::multi::{many0, many1, separated_list1};
 use nom::sequence::{delimited, preceded, terminated};
 use nom::{IResult, Input, Parser};
 use nom_locate::{LocatedSpan, position};
+use regex::Regex;
+
+lazy_static! {
+    static ref LINE_ENDING_OR_MULTILINE_COMMENT_START_REGEX: Regex =
+        Regex::new(r#"(\n|\r\n|"""|''')"#).unwrap();
+}
 
 type Span<'a> = LocatedSpan<&'a str>;
 
@@ -21,11 +28,7 @@ pub struct Import {
 }
 
 impl Import {
-    pub fn new(
-        imported_object: String,
-        line_number: u32,
-        typechecking_only: bool,
-    ) -> Self {
+    pub fn new(imported_object: String, line_number: u32, typechecking_only: bool) -> Self {
         Self {
             imported_object,
             line_number,
@@ -51,7 +54,13 @@ fn parse_block(typechecking_only: bool) -> impl Fn(Span) -> IResult<Span, Vec<Im
             value(vec![], parse_multiline_comment),
             value(vec![], parse_comment),
             parse_import_statement_list(typechecking_only),
-            value(vec![], verify(not_line_ending, |s: &Span| !s.is_empty())),
+            value(
+                vec![],
+                verify(
+                    parse_till_regex(&LINE_ENDING_OR_MULTILINE_COMMENT_START_REGEX),
+                    |s: &Span| !s.is_empty(),
+                ),
+            ),
         )))
         .parse(s)?;
         Ok((s, result.into_iter().flatten().collect()))
@@ -134,11 +143,7 @@ fn parse_from_import_statement(
                     } else {
                         format!("{}.{}", imported_module_base, imported_identifier)
                     };
-                    Import::new(
-                        imported_object,
-                        position.location_line(),
-                        typechecking_only,
-                    )
+                    Import::new(imported_object, position.location_line(), typechecking_only)
                 })
                 .collect(),
         ))
@@ -186,11 +191,7 @@ fn parse_multiline_from_import_statement(
                     } else {
                         format!("{}.{}", imported_module_base, imported_identifier)
                     };
-                    Import::new(
-                        imported_object,
-                        position.location_line(),
-                        typechecking_only,
-                    )
+                    Import::new(imported_object, position.location_line(), typechecking_only)
                 })
                 .collect(),
         ))
@@ -321,10 +322,22 @@ fn parse_indented_block(s: Span) -> IResult<Span, Span> {
     Ok(input.take_split(s.location_offset() - input.location_offset()))
 }
 
+fn parse_till_regex(re: &Regex) -> impl Fn(Span) -> IResult<Span, Span> {
+    move |s| {
+        if let Some(m) = re.find(s.fragment()) {
+            Ok(s.take_split(m.start()))
+        } else {
+            Ok(s.take_split(s.len()))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_imports;
+    use super::{Span, parse_imports, parse_till_regex};
+    use nom::Parser;
     use parameterized::parameterized;
+    use regex::Regex;
 
     #[test]
     fn test_parse_empty_string() {
@@ -635,6 +648,22 @@ import bar
 '''
 import baz
 "#, &["foo", "baz"]),
+
+        (r#"
+import foo
+s = """
+import bar
+"""
+import baz
+"#, &["foo", "baz"]),
+
+        (r#"
+import foo
+s = '''
+import bar
+'''
+import baz
+"#, &["foo", "baz"]),
     })]
     fn test_multiline_strings(case: (&str, &[&str])) {
         parse_and_check(case);
@@ -688,5 +717,22 @@ if TYPE_CHECKING:
                 .map(|i| (i.imported_object, i.line_number, i.typechecking_only))
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn test_parse_till_regex() {
+        let regex = Regex::new(r"bar").unwrap();
+
+        let (rest, result) = parse_till_regex(&regex).parse(Span::new("foobar")).unwrap();
+        assert_eq!(*rest.fragment(), "bar");
+        assert_eq!(*result.fragment(), "foo");
+
+        let (rest, result) = parse_till_regex(&regex).parse(Span::new("barfoo")).unwrap();
+        assert_eq!(*rest.fragment(), "barfoo");
+        assert_eq!(*result.fragment(), "");
+
+        let (rest, result) = parse_till_regex(&regex).parse(Span::new("foo")).unwrap();
+        assert_eq!(*rest.fragment(), "");
+        assert_eq!(*result.fragment(), "foo");
     }
 }

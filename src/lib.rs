@@ -629,6 +629,17 @@ import baz
     #[parameterized(case = {
         (r#"
 import foo
+# import bar
+import baz
+"#, &["foo", "baz"]),
+    })]
+    fn test_comments(case: (&str, &[&str])) {
+        parse_and_check(case);
+    }
+
+    #[parameterized(case = {
+        (r#"
+import foo
 """
 import bar
 """
